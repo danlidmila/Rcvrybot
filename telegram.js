@@ -5,8 +5,8 @@ const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
 let lastUpdateId = 0;
 
-// ─── Raw HTTPS helper ─────────────────────────────────────────────────
-function apiRequest(method, payload = {}) {
+// ─── POST helper ──────────────────────────────────────────────────────
+function apiPost(method, payload = {}) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify(payload);
     const options = {
@@ -32,48 +32,64 @@ function apiRequest(method, payload = {}) {
   });
 }
 
-// ─── Delete any existing webhook so getUpdates works ─────────────────
+// ─── GET helper ───────────────────────────────────────────────────────
+function apiGet(method, params = {}) {
+  return new Promise((resolve) => {
+    const query = new URLSearchParams(params).toString();
+    const path = `/bot${BOT_TOKEN}/${method}${query ? '?' + query : ''}`;
+
+    https.get({ hostname: 'api.telegram.org', path }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); }
+        catch (e) { resolve({}); }
+      });
+    }).on('error', () => resolve({}));
+  });
+}
+
+// ─── Clear webhook ────────────────────────────────────────────────────
 async function clearWebhook() {
   console.log('🔧 Clearing webhook...');
-  const res = await apiRequest('deleteWebhook', { drop_pending_updates: true });
+  const res = await apiPost('deleteWebhook', { drop_pending_updates: false });
   console.log('Webhook cleared:', JSON.stringify(res));
 }
 
-// ─── Confirm bot identity on startup ─────────────────────────────────
+// ─── Bot identity ─────────────────────────────────────────────────────
 async function logBotInfo() {
-  const res = await apiRequest('getMe', {});
+  const res = await apiGet('getMe');
   if (res.ok) {
-    console.log(`🤖 Bot identity: @${res.result.username} (id: ${res.result.id})`);
+    console.log(`🤖 Bot: @${res.result.username} (id: ${res.result.id})`);
   } else {
-    console.error('❌ getMe failed — check BOT_TOKEN:', JSON.stringify(res));
+    console.error('❌ getMe failed:', JSON.stringify(res));
   }
 }
 
 // ─── Send message ─────────────────────────────────────────────────────
 function sendTelegramMessage(message, chatId = CHAT_ID) {
-  return new Promise((resolve) => {
-    if (!BOT_TOKEN || !chatId) {
-      console.error('❌ Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID');
-      return resolve();
-    }
-    apiRequest('sendMessage', {
-      chat_id: chatId,
-      text: message,
-      parse_mode: 'HTML',
-      disable_web_page_preview: true,
-    }).then(resolve).catch(() => resolve());
+  if (!BOT_TOKEN || !chatId) {
+    console.error('❌ Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID');
+    return Promise.resolve();
+  }
+  return apiPost('sendMessage', {
+    chat_id: chatId,
+    text: message,
+    parse_mode: 'HTML',
+    disable_web_page_preview: true,
   });
 }
 
-// ─── Get updates ──────────────────────────────────────────────────────
+// ─── Get updates via GET ──────────────────────────────────────────────
 async function getUpdates() {
   if (!BOT_TOKEN) return [];
   try {
-    const res = await apiRequest('getUpdates', {
+    const params = {
       offset: lastUpdateId + 1,
       timeout: 5,
-      allowed_updates: ['message', 'channel_post'],
-    });
+      allowed_updates: JSON.stringify(['message', 'channel_post']),
+    };
+    const res = await apiGet('getUpdates', params);
 
     if (!res.ok) {
       console.error('getUpdates error:', JSON.stringify(res));
@@ -81,7 +97,7 @@ async function getUpdates() {
     }
 
     if (res.result && res.result.length > 0) {
-      console.log(`📨 Got ${res.result.length} update(s)`);
+      console.log(`📨 ${res.result.length} update(s) received`);
       lastUpdateId = res.result[res.result.length - 1].update_id;
       return res.result;
     }
@@ -99,20 +115,17 @@ function startCommandListener(getState, getTokens) {
   async function poll() {
     try {
       const updates = await getUpdates();
-
       for (const update of updates) {
-        // Log every update so we can debug
-        console.log('📩 Update received:', JSON.stringify(update).slice(0, 300));
+        console.log('📩 Update:', JSON.stringify(update).slice(0, 200));
 
         const msg = update.message || update.channel_post;
         if (!msg || !msg.text) continue;
 
         const chatId = msg.chat.id;
-        const text = msg.text.trim().toLowerCase().split('@')[0]; // strip @botname suffix
+        const text = msg.text.trim().toLowerCase().split('@')[0];
+        console.log(`💬 "${text}" from chat ${chatId}`);
 
-        console.log(`💬 Command from chat ${chatId}: "${text}"`);
-
-        if (text.startsWith('/start')) {
+        if (text === '/start') {
           await sendTelegramMessage(
             `🤖 <b>Dip Monitor Bot is live!</b>\n\n` +
             `Tracking <b>${getTokens().length}</b> tokens for dips &amp; reversals.\n\n` +
@@ -123,7 +136,7 @@ function startCommandListener(getState, getTokens) {
             chatId
           );
 
-        } else if (text.startsWith('/status')) {
+        } else if (text === '/status') {
           const state = getState();
           const tokens = getTokens();
           let lines = ['📊 <b>Token Status</b>\n'];
@@ -142,7 +155,7 @@ function startCommandListener(getState, getTokens) {
           }
           await sendTelegramMessage(lines.join('\n'), chatId);
 
-        } else if (text.startsWith('/tokens')) {
+        } else if (text === '/tokens') {
           const tokens = getTokens();
           let lines = [`📋 <b>Monitored Tokens (${tokens.length})</b>\n`];
           for (const t of tokens) {
@@ -150,7 +163,7 @@ function startCommandListener(getState, getTokens) {
           }
           await sendTelegramMessage(lines.join('\n'), chatId);
 
-        } else if (text.startsWith('/help')) {
+        } else if (text === '/help') {
           await sendTelegramMessage(
             `ℹ️ <b>Dip Monitor Bot</b>\n\n` +
             `/start — welcome message\n` +
@@ -162,9 +175,8 @@ function startCommandListener(getState, getTokens) {
         }
       }
     } catch (err) {
-      console.error('Command poll error:', err.message);
+      console.error('Poll error:', err.message);
     }
-
     setTimeout(poll, 2000);
   }
 
