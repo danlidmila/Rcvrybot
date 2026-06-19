@@ -4,6 +4,8 @@ const { getTokenData } = require('./dexscreener');
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+const DEFAULT_DIP = parseFloat(process.env.DEFAULT_DIP_THRESHOLD || '30');
+const DEFAULT_RECOVERY = parseFloat(process.env.DEFAULT_RECOVERY_THRESHOLD || '20');
 
 let lastUpdateId = 0;
 
@@ -68,7 +70,7 @@ function sendTelegramMessage(message, chatId = CHAT_ID) {
     console.error('❌ Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID');
     return Promise.resolve();
   }
-  console.log(`📤 Sending message to ${chatId}...`);
+  console.log(`📤 Sending to ${chatId}...`);
   return apiPost('sendMessage', {
     chat_id: chatId,
     text: message,
@@ -89,10 +91,7 @@ async function getUpdates() {
       timeout: 5,
       allowed_updates: JSON.stringify(['message', 'channel_post']),
     });
-    if (!res.ok) {
-      console.error('getUpdates error:', JSON.stringify(res));
-      return [];
-    }
+    if (!res.ok) { console.error('getUpdates error:', JSON.stringify(res)); return []; }
     if (res.result && res.result.length > 0) {
       lastUpdateId = res.result[res.result.length - 1].update_id;
       console.log(`📨 ${res.result.length} update(s)`);
@@ -105,11 +104,6 @@ async function getUpdates() {
   }
 }
 
-// ─── Default thresholds ───────────────────────────────────────────────
-const DEFAULT_DIP = parseFloat(process.env.DEFAULT_DIP_THRESHOLD || '30');
-const DEFAULT_RECOVERY = parseFloat(process.env.DEFAULT_RECOVERY_THRESHOLD || '20');
-
-// ─── Command listener ─────────────────────────────────────────────────
 function startCommandListener(getState, initTokenState, removeTokenState) {
   console.log('👂 Command listener started');
 
@@ -119,52 +113,42 @@ function startCommandListener(getState, initTokenState, removeTokenState) {
       for (const update of updates) {
         const msg = update.message || update.channel_post;
         if (!msg || !msg.text) continue;
-
         const chatId = msg.chat.id;
         const raw = msg.text.trim();
         const text = raw.toLowerCase().split('@')[0].trim();
+        console.log(`💬 "${raw}" from ${chatId}`);
 
-        console.log(`💬 "${raw}" from chat ${chatId}`);
-
-        // ── /start ───────────────────────────────────────────────────
-        if (text === '/start') {
+        if (text === '/start' || text === '/help') {
           const tokens = loadTokens();
           await sendTelegramMessage(
-            `🤖 <b>Dip Monitor Bot is live!</b>\n\n` +
-            `Tracking <b>${tokens.length}</b> token(s).\n\n` +
-            `<b>Commands:</b>\n` +
-            `/add CA — add a token by contract address\n` +
-            `/remove SYMBOL — stop tracking a token\n` +
-            `/tokens — list all tracked tokens\n` +
-            `/status — live prices &amp; state\n` +
-            `/help — show this message`,
+            `🤖 <b>Dip Monitor Bot</b>\n\n` +
+            `Tracking <b>${tokens.length}</b> token(s)\n\n` +
+            `/add CA — add token by contract address\n` +
+            `/remove SYMBOL — stop tracking\n` +
+            `/tokens — list tracked tokens\n` +
+            `/status — live prices\n\n` +
+            `Dip threshold: ${DEFAULT_DIP}% | Recovery: ${DEFAULT_RECOVERY}%`,
             chatId
           );
 
-        // ── /add CA (just paste the contract address) ─────────────────
         } else if (text.startsWith('/add')) {
           const parts = raw.trim().split(/\s+/);
           if (parts.length < 2) {
-            await sendTelegramMessage(
-              `❌ Usage: <code>/add CONTRACT_ADDRESS</code>\n\nExample:\n<code>/add 6JfonM6a24xngXh5yJ1imZzbMhpfvEsiafkb4syHBAGS</code>`,
-              chatId
-            );
+            await sendTelegramMessage(`❌ Usage: <code>/add CONTRACT_ADDRESS</code>`, chatId);
             continue;
           }
-
           const contractAddress = parts[1].trim();
           await sendTelegramMessage(`🔍 Looking up <code>${contractAddress}</code>...`, chatId);
 
           let tokenData;
-          try {
-            tokenData = await getTokenData(contractAddress);
-          } catch (err) {
-            await sendTelegramMessage(`❌ Failed to fetch token data: ${err.message}`, chatId);
+          try { tokenData = await getTokenData(contractAddress); }
+          catch (err) {
+            await sendTelegramMessage(`❌ Fetch failed: ${err.message}`, chatId);
             continue;
           }
 
           if (!tokenData || !tokenData.symbol) {
-            await sendTelegramMessage(`❌ Could not find token on DexScreener. Check the contract address and try again.`, chatId);
+            await sendTelegramMessage(`❌ Token not found on DexScreener. Check the CA and try again.`, chatId);
             continue;
           }
 
@@ -186,34 +170,30 @@ function startCommandListener(getState, initTokenState, removeTokenState) {
               `Chain: ${tokenData.chain}\n` +
               `Price: $${tokenData.priceUsd}\n` +
               `Liquidity: $${formatNum(tokenData.liquidity)}\n` +
-              `Dip alert at: ${DEFAULT_DIP}% drop\n` +
-              `Recovery alert at: ${DEFAULT_RECOVERY}% gain\n\n` +
+              `Dip alert: ${DEFAULT_DIP}% | Recovery: ${DEFAULT_RECOVERY}%\n\n` +
               `<code>${contractAddress}</code>`,
               chatId
             );
           }
 
-        // ── /remove ──────────────────────────────────────────────────
         } else if (text.startsWith('/remove')) {
           const parts = raw.trim().split(/\s+/);
           if (parts.length < 2) {
-            await sendTelegramMessage(`❌ Usage: <code>/remove SYMBOL</code>\nExample: <code>/remove HIVE</code>`, chatId);
+            await sendTelegramMessage(`❌ Usage: <code>/remove SYMBOL</code>`, chatId);
             continue;
           }
-          const target = parts[1];
-          const removed = removeToken(target);
+          const removed = removeToken(parts[1]);
           if (!removed) {
-            await sendTelegramMessage(`⚠️ <b>${target.toUpperCase()}</b> not found.`, chatId);
+            await sendTelegramMessage(`⚠️ <b>${parts[1].toUpperCase()}</b> not found.`, chatId);
           } else {
             removeTokenState(removed.contractAddress);
-            await sendTelegramMessage(`🗑️ Removed <b>${removed.symbol}</b> from tracking.`, chatId);
+            await sendTelegramMessage(`🗑️ Removed <b>${removed.symbol}</b>.`, chatId);
           }
 
-        // ── /tokens ──────────────────────────────────────────────────
         } else if (text === '/tokens') {
           const tokens = loadTokens();
           if (!tokens.length) {
-            await sendTelegramMessage(`📋 No tokens tracked yet.\n\nAdd one:\n<code>/add CONTRACT_ADDRESS</code>`, chatId);
+            await sendTelegramMessage(`📋 No tokens yet.\n\n<code>/add CONTRACT_ADDRESS</code>`, chatId);
             continue;
           }
           let lines = [`📋 <b>Tracked Tokens (${tokens.length})</b>\n`];
@@ -222,7 +202,6 @@ function startCommandListener(getState, initTokenState, removeTokenState) {
           }
           await sendTelegramMessage(lines.join('\n'), chatId);
 
-        // ── /status ──────────────────────────────────────────────────
         } else if (text === '/status') {
           const state = getState();
           const tokens = loadTokens();
@@ -238,27 +217,14 @@ function startCommandListener(getState, initTokenState, removeTokenState) {
               continue;
             }
             const dipStatus = s.inDip ? '🔴 IN DIP' : '🟢 Normal';
+            const drop = s.baseline ? (((s.baseline - s.lastPrice) / s.baseline) * 100).toFixed(1) : '0.0';
             lines.push(
               `• <b>${token.symbol}</b> ${dipStatus}\n` +
               `  Peak: ${formatNum(s.baseline)} | Now: ${formatNum(s.lastPrice)}\n` +
-              `  Drop from peak: ${(((s.baseline - s.lastPrice) / s.baseline) * 100).toFixed(1)}%\n` +
-              `  Reversals: ${s.reversalCount}`
+              `  Drop: ${drop}% | Reversals: ${s.reversalCount}`
             );
           }
           await sendTelegramMessage(lines.join('\n'), chatId);
-
-        // ── /help ────────────────────────────────────────────────────
-        } else if (text === '/help') {
-          await sendTelegramMessage(
-            `ℹ️ <b>Dip Monitor Bot</b>\n\n` +
-            `/add CA — add token by contract address (auto-detects symbol)\n` +
-            `/remove SYMBOL — stop tracking\n` +
-            `/tokens — list tracked tokens\n` +
-            `/status — live prices &amp; state\n` +
-            `/start or /help — this message\n\n` +
-            `Default thresholds: Dip ${DEFAULT_DIP}% | Recovery ${DEFAULT_RECOVERY}%`,
-            chatId
-          );
         }
       }
     } catch (err) {
@@ -270,7 +236,6 @@ function startCommandListener(getState, initTokenState, removeTokenState) {
   poll();
 }
 
-// ─── Alert formatters ─────────────────────────────────────────────────
 function formatDipAlert(symbol, contractAddress, peak, currentPrice, dropPercent) {
   return [
     `🚨 <b>MASSIVE DIP DETECTED — ${symbol}</b>`,
