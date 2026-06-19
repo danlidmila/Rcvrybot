@@ -9,8 +9,8 @@ const state = {};
 function initTokenState(token) {
   if (!state[token.contractAddress]) {
     state[token.contractAddress] = {
-      baseline: null,   // rolling peak (moves up only)
-      dipBaseline: null, // lowest point during a dip
+      baseline: null,
+      dipBaseline: null,
       inDip: false,
       dipAlertSent: false,
       reversalCount: 0,
@@ -27,7 +27,6 @@ function removeTokenState(contractAddress) {
 
 async function checkToken(token) {
   const { symbol, contractAddress, dipThreshold, reversalThreshold } = token;
-
   if (!state[contractAddress]) initTokenState(token);
   const s = state[contractAddress];
 
@@ -46,7 +45,6 @@ async function checkToken(token) {
 
   const price = priceData.priceNative;
 
-  // First reading — set baseline
   if (s.baseline === null) {
     s.baseline = price;
     s.lastPrice = price;
@@ -57,39 +55,29 @@ async function checkToken(token) {
   s.lastPrice = price;
 
   if (!s.inDip) {
-    // Track peak upward
     if (price > s.baseline) {
       s.baseline = price;
       console.log(`[${symbol}] New peak: ${price}`);
     }
-
     const dropFromPeak = ((s.baseline - price) / s.baseline) * 100;
     console.log(`[${symbol}] Price: ${price} | Peak: ${s.baseline} | Drop: ${dropFromPeak.toFixed(1)}% | Threshold: ${dipThreshold}%`);
 
     if (dropFromPeak >= dipThreshold) {
-      console.log(`[${symbol}] 🚨 DIP TRIGGERED: ${dropFromPeak.toFixed(1)}%`);
+      console.log(`[${symbol}] 🚨 DIP TRIGGERED`);
       s.inDip = true;
       s.dipBaseline = price;
       s.dipAlertSent = true;
       await sendTelegramMessage(formatDipAlert(symbol, contractAddress, s.baseline, price, dropFromPeak));
     }
-
   } else {
-    // Track dip floor downward
-    if (price < s.dipBaseline) {
-      s.dipBaseline = price;
-      console.log(`[${symbol}] New dip low: ${price}`);
-    }
-
+    if (price < s.dipBaseline) s.dipBaseline = price;
     const gainFromDip = ((price - s.dipBaseline) / s.dipBaseline) * 100;
     console.log(`[${symbol}] Price: ${price} | DipBaseline: ${s.dipBaseline} | Gain: ${gainFromDip.toFixed(1)}% | Threshold: ${reversalThreshold}%`);
 
     if (gainFromDip >= reversalThreshold) {
       s.reversalCount++;
-      console.log(`[${symbol}] 🔄 REVERSAL #${s.reversalCount}: +${gainFromDip.toFixed(1)}%`);
+      console.log(`[${symbol}] 🔄 REVERSAL #${s.reversalCount}`);
       await sendTelegramMessage(formatReversalAlert(symbol, contractAddress, s.dipBaseline, price, gainFromDip, s.reversalCount));
-
-      // Exit dip, new peak is current price
       s.inDip = false;
       s.dipAlertSent = false;
       s.baseline = price;
@@ -101,7 +89,7 @@ async function checkToken(token) {
 async function pollAll() {
   const tokens = loadTokens();
   if (!tokens.length) {
-    console.log('⏳ No tokens to monitor yet. Add one with /add CA');
+    console.log('⏳ No tokens yet. Add one with /add CA');
     return;
   }
   console.log(`🔄 Polling ${tokens.length} token(s)...`);
@@ -113,22 +101,4 @@ async function pollAll() {
 
 async function startMonitor() {
   const tokens = loadTokens();
-  for (const token of tokens) initTokenState(token);
-
-  await clearWebhook();
-  await logBotInfo();
-
-  console.log(`📡 Loaded ${tokens.length} saved token(s). Polling every ${POLL_INTERVAL / 1000}s`);
-
-  startCommandListener(
-    () => state,
-    initTokenState,
-    removeTokenState
-  );
-
-  // Poll immediately then on interval
-  await pollAll();
-  setInterval(pollAll, POLL_INTERVAL);
-}
-
-module.exports = { startMonitor };
+  for
