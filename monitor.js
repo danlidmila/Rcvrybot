@@ -16,13 +16,12 @@ function initTokenState(token) {
       reversalCount: 0,
       lastPrice: null,
     };
-    console.log(`📌 Init state for ${token.symbol}`);
+    console.log(`Init state for ${token.symbol}`);
   }
 }
 
 function removeTokenState(contractAddress) {
   delete state[contractAddress];
-  console.log(`🗑️ Removed state for ${contractAddress}`);
 }
 
 async function checkToken(token) {
@@ -60,10 +59,10 @@ async function checkToken(token) {
       console.log(`[${symbol}] New peak: ${price}`);
     }
     const dropFromPeak = ((s.baseline - price) / s.baseline) * 100;
-    console.log(`[${symbol}] Price: ${price} | Peak: ${s.baseline} | Drop: ${dropFromPeak.toFixed(1)}% | Threshold: ${dipThreshold}%`);
+    console.log(`[${symbol}] Drop: ${dropFromPeak.toFixed(1)}% Threshold: ${dipThreshold}%`);
 
     if (dropFromPeak >= dipThreshold) {
-      console.log(`[${symbol}] 🚨 DIP TRIGGERED`);
+      console.log(`[${symbol}] DIP TRIGGERED`);
       s.inDip = true;
       s.dipBaseline = price;
       s.dipAlertSent = true;
@@ -72,11 +71,11 @@ async function checkToken(token) {
   } else {
     if (price < s.dipBaseline) s.dipBaseline = price;
     const gainFromDip = ((price - s.dipBaseline) / s.dipBaseline) * 100;
-    console.log(`[${symbol}] Price: ${price} | DipBaseline: ${s.dipBaseline} | Gain: ${gainFromDip.toFixed(1)}% | Threshold: ${reversalThreshold}%`);
+    console.log(`[${symbol}] Gain from dip: ${gainFromDip.toFixed(1)}% Threshold: ${reversalThreshold}%`);
 
     if (gainFromDip >= reversalThreshold) {
       s.reversalCount++;
-      console.log(`[${symbol}] 🔄 REVERSAL #${s.reversalCount}`);
+      console.log(`[${symbol}] REVERSAL #${s.reversalCount}`);
       await sendTelegramMessage(formatReversalAlert(symbol, contractAddress, s.dipBaseline, price, gainFromDip, s.reversalCount));
       s.inDip = false;
       s.dipAlertSent = false;
@@ -89,10 +88,10 @@ async function checkToken(token) {
 async function pollAll() {
   const tokens = loadTokens();
   if (!tokens.length) {
-    console.log('⏳ No tokens yet. Add one with /add CA');
+    console.log('No tokens yet. Add one with /add CA');
     return;
   }
-  console.log(`🔄 Polling ${tokens.length} token(s)...`);
+  console.log(`Polling ${tokens.length} token(s)...`);
   for (const token of tokens) {
     await checkToken(token);
     await new Promise(res => setTimeout(res, 1500));
@@ -101,4 +100,13 @@ async function pollAll() {
 
 async function startMonitor() {
   const tokens = loadTokens();
-  for
+  for (const token of tokens) initTokenState(token);
+  await clearWebhook();
+  await logBotInfo();
+  console.log(`Loaded ${tokens.length} token(s). Polling every ${POLL_INTERVAL / 1000}s`);
+  startCommandListener(() => state, initTokenState, removeTokenState);
+  await pollAll();
+  setInterval(pollAll, POLL_INTERVAL);
+}
+
+module.exports = { startMonitor };
