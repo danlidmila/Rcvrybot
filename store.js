@@ -24,7 +24,7 @@ function saveTokens(tokens) {
   ensureDir();
   try {
     fs.writeFileSync(STORE_FILE, JSON.stringify(tokens, null, 2));
-    console.log(`💾 Saved ${tokens.length} token(s) to store`);
+    console.log(`Saved ${tokens.length} token(s) to store`);
   } catch (e) {
     console.error('Failed to save tokens store:', e.message);
   }
